@@ -1,6 +1,6 @@
 // Issues, labels and comments over the same store the REST and GraphQL surfaces read.
 import { T0, VIEWER, globalId, nodeIdOf, JSON_TYPE } from './util.mjs';
-import { repoUrl, userJson } from './store.mjs';
+import { repoUrl, store, userJson } from './store.mjs';
 
 export function labelJson(repo, label) {
   const base = repoUrl(repo);
@@ -92,8 +92,8 @@ export function issueResponse(repo, issue) {
     const buf = Buffer.from(`${JSON.stringify(issueJson(repo, issue))}\n`, 'utf8');
     issue._response = {
       buf,
-      idIndex: 7,
-      headers: ['content-type', JSON_TYPE, 'content-length', String(buf.length), 'cache-control', 'no-store', 'x-github-request-id', ''],
+      idIndex: 5,
+      headers: ['content-type', JSON_TYPE, 'content-length', String(buf.length), 'x-github-request-id', ''],
     };
     issue._responseVersion = issue.version;
   }
@@ -136,5 +136,6 @@ export function createIssue(repo, input) {
     version: 0,
   };
   repo.issues.push(issue);
+  store.issueRoutes.set(`/api/v3/repos/${repo._key}/issues/${number}`, { repo, issue });
   return issue;
 }

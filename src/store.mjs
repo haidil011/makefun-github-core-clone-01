@@ -1,7 +1,7 @@
 // The forge's in-memory store: repositories, git objects and refs.
 import { T0, T0_SEC, VIEWER, globalId, nodeIdOf, oidOf } from './util.mjs';
 
-export const store = { repos: new Map(), nextRepoId: 1 };
+export const store = { repos: new Map(), nextRepoId: 1, issueRoutes: new Map() };
 
 export const ADA = { name: 'ada iversen', email: 'adaiversen@example.invalid' };
 
@@ -37,6 +37,8 @@ export function createRepo(owner, name, description, isPrivate) {
     nextPull: 1,
     nextComment: 1,
     gitVersion: 0,
+    _commitInfo: new Map(),
+    _key: repoKey(owner, name),
   };
   store.repos.set(repoKey(owner, name), repo);
   return repo;
@@ -44,8 +46,10 @@ export function createRepo(owner, name, description, isPrivate) {
 
 export function removeRepo(repo) {
   store.repos.delete(repoKey(repo.owner, repo.name));
+  for (const [path, entry] of store.issueRoutes) {
+    if (entry.repo === repo) store.issueRoutes.delete(path);
+  }
 }
-
 export function repoUrl(repo) {
   return `https://makefun.invalid/repos/${repo.owner}/${repo.name}`;
 }
@@ -285,20 +289,36 @@ export function buildTreeFromMap(repo, files) {
   return build(root);
 }
 
+export function commitInfo(repo, oid) {
+  if (oid === null || oid === undefined) return null;
+  const cached = repo._commitInfo.get(oid);
+  if (cached !== undefined) return cached;
+  const obj = repo.objects.get(oid);
+  if (obj === undefined || obj.type !== 'commit') return null;
+  const info = parseCommit(obj.data);
+  if (repo._commitInfo.size > 4096) repo._commitInfo.clear();
+  repo._commitInfo.set(oid, info);
+  return info;
+}
+
+export function parentsOf(repo, oid) {
+  const info = commitInfo(repo, oid);
+  return info === null ? EMPTY_PARENTS : info.parents;
+}
+
+const EMPTY_PARENTS = [];
+
 export function isAncestor(repo, ancestor, tip) {
   if (ancestor === tip) return true;
   const seen = new Set();
   const stack = [tip];
   while (stack.length) {
     const oid = stack.pop();
-    if (oid === undefined || seen.has(oid)) continue;
+    if (oid === undefined) continue;
+    if (oid === ancestor) return true;
+    if (seen.has(oid)) continue;
     seen.add(oid);
-    const obj = repo.objects.get(oid);
-    if (obj === undefined || obj.type !== 'commit') continue;
-    for (const parent of parseCommit(obj.data).parents) {
-      if (parent === ancestor) return true;
-      stack.push(parent);
-    }
+    for (const parent of parentsOf(repo, oid)) stack.push(parent);
   }
   return false;
 }

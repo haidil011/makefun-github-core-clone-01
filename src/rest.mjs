@@ -61,7 +61,7 @@ export async function handleRest(req, res, url) {
   const method = req.method ?? 'GET';
   const pathname = url.pathname;
   const raw = pathname.replace(/^\/api\/v3\b/, '');
-  const segments = raw.split('/').filter((part) => part !== '').map((part) => decodeURIComponent(part));
+  const segments = raw.split('/').filter((part) => part !== '').map((part) => (part.indexOf('%') === -1 ? part : decodeURIComponent(part)));
   const first = segments[0] ?? '';
 
   let body = {};

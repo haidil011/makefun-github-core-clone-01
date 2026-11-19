@@ -1,7 +1,7 @@
 // Git smart HTTP: upload-pack protocol v2 (v0 advertisement too) and receive-pack v0.
 import { deflateSync } from 'node:zlib';
 import { FORGE_NAME, FORGE_VERSION, FLUSH, ZERO_OID, decodePackets, line, pkt, pktLines } from './util.mjs';
-import { isAncestor, parseCommit, parseTree, tipOf } from './store.mjs';
+import { commitInfo, isAncestor, parentsOf, parseTree, tipOf } from './store.mjs';
 import { decodePack, encodePack } from './pack.mjs';
 
 const AGENT = `${FORGE_NAME}/${FORGE_VERSION}`;
@@ -173,9 +173,11 @@ export function haveObjects(repo, haves, shallow) {
     if (obj === undefined) continue;
     if (obj.type === 'commit') {
       closed.add(oid);
-      addTree(repo, parseCommit(obj.data).tree, closed, null);
+      const info = commitInfo(repo, oid);
+      if (info === null) continue;
+      addTree(repo, info.tree, closed, null);
       if (shallowSet.has(oid)) continue;
-      for (const parent of parseCommit(obj.data).parents) stack.push(parent);
+      for (const parent of info.parents) stack.push(parent);
     } else if (obj.type === 'tag') {
       closed.add(oid);
       const target = /^object ([0-9a-f]{40})$/m.exec(obj.data.toString('utf8'));
@@ -186,9 +188,7 @@ export function haveObjects(repo, haves, shallow) {
 }
 
 function commitParents(repo, oid) {
-  const obj = repo.objects.get(oid);
-  if (obj === undefined || obj.type !== 'commit') return [];
-  return parseCommit(obj.data).parents;
+  return parentsOf(repo, oid);
 }
 
 export function collectFetch(repo, wants, haves, shallow, depth) {
@@ -216,11 +216,13 @@ export function collectFetch(repo, wants, haves, shallow, depth) {
     }
     if (includeCommits.has(oid)) continue;
     if (depth !== null && level > depth) continue;
+    const info = commitInfo(repo, oid);
+    if (info === null) continue;
     includeCommits.add(oid);
     if (!haveClosed.has(oid)) send.add(oid);
-    addTree(repo, parseCommit(obj.data).tree, send, haveClosed);
+    addTree(repo, info.tree, send, haveClosed);
     if (depth === null || level < depth) {
-      for (const parent of parseCommit(obj.data).parents) queue.push({ oid: parent, level: level + 1 });
+      for (const parent of info.parents) queue.push({ oid: parent, level: level + 1 });
     }
   }
 

@@ -4,29 +4,41 @@ import { handleRest } from './rest.mjs';
 import { runGraphql } from './graphql.mjs';
 import { mcpHttpAnswer } from './mcp.mjs';
 import { fetchResponse, lsRefs, receiveAdvertisement, receiveResponse, uploadAdvertisement } from './git-http.mjs';
-import { findRepo } from './store.mjs';
+import { findRepo, store } from './store.mjs';
 import { findIssue, issueResponse } from './issues.mjs';
 import { VIEWER } from './util.mjs';
 import { sendBuffer, sendJson, sendEmpty, sendPrepared, readBody, parseJson } from './http.mjs';
 
-function tokenOf() {
+const TOKEN = (() => {
   const value = process.env.MAKEFUN_SHOP_TOKEN;
   return typeof value === 'string' && value !== '' ? value : 'devtok';
-}
+})();
+const BEARER = `Bearer ${TOKEN}`;
+
+const EMPTY_PARAMS = new URLSearchParams('');
+const HEALTH_BODY = Buffer.from('{"ok":true}\n');
+const HEALTH = {
+  buf: HEALTH_BODY,
+  headers: ['content-type', 'application/json; charset=utf-8', 'content-length', String(HEALTH_BODY.length), 'x-github-request-id', ''],
+  idIndex: 5,
+};
 
 function authorized(req) {
-  const header = req.headers.authorization;
-  if (typeof header !== 'string') return false;
-  const match = /^Bearer\s+(.+)$/i.exec(header);
-  return match !== null && match[1] === tokenOf();
+  return req.headers.authorization === BEARER;
 }
 
-function pathOf(req) {
-  try {
-    return new URL(req.url ?? '/', 'http://entry');
-  } catch {
-    return new URL('http://entry/');
+function pathOf(rawUrl) {
+  if (rawUrl.charCodeAt(0) !== 47) {
+    try {
+      const parsed = new URL(rawUrl, 'http://entry');
+      return { pathname: parsed.pathname, searchParams: parsed.searchParams };
+    } catch {
+      return { pathname: '/', searchParams: EMPTY_PARAMS };
+    }
   }
+  const at = rawUrl.indexOf('?');
+  if (at === -1) return { pathname: rawUrl, searchParams: EMPTY_PARAMS };
+  return { pathname: rawUrl.slice(0, at), searchParams: new URLSearchParams(rawUrl.slice(at + 1)) };
 }
 
 export function createApp() {
@@ -36,9 +48,11 @@ export function createApp() {
       else res.destroy();
     });
   });
-  server.keepAliveTimeout = 120_000;
-  server.headersTimeout = 125_000;
+  server.keepAliveTimeout = 0;
+  server.headersTimeout = 0;
   server.requestTimeout = 0;
+  server.timeout = 0;
+  server.maxHeadersCount = 2000;
   server.on('connection', (socket) => socket.setNoDelay(true));
   return server;
 }
@@ -46,15 +60,24 @@ export function createApp() {
 async function handle(req, res) {
   const method = req.method ?? 'GET';
   const rawUrl = req.url ?? '/';
-  const rawPath = rawUrl.split('?')[0];
+  const at = rawUrl.indexOf('?');
+  const rawPath = at === -1 ? rawUrl : rawUrl.slice(0, at);
   if (method === 'GET' && rawPath === '/healthz') {
-    sendJson(res, 200, { ok: true });
+    sendPrepared(res, 200, HEALTH);
     return;
   }
 
   if (!authorized(req)) {
     sendJson(res, 401, { message: 'Requires authentication' });
     return;
+  }
+
+  if (method === 'GET') {
+    const fast = store.issueRoutes.get(rawPath);
+    if (fast !== undefined) {
+      sendPrepared(res, 200, issueResponse(fast.repo, fast.issue));
+      return;
+    }
   }
 
   if (method === 'GET') {
@@ -139,7 +162,7 @@ async function handle(req, res) {
     return;
   }
 
-  const url = pathOf(req);
+  const url = pathOf(rawUrl);
   if (url.pathname === '/mcp' || url.pathname === '/mcp/') {
     if (method !== 'POST') {
       sendJson(res, 405, { message: 'Method Not Allowed' });
